@@ -54,7 +54,29 @@
         </div>
       </div>
     </nav>
-
+    <!-- Tambahkan setelah navbar, sebelum filters -->
+    <div class="container-fluid">
+      <!-- API Status Banner -->
+      <div
+        id="apiStatusBanner"
+        class="alert alert-dismissible fade"
+        role="alert"
+        style="display: none; margin: 10px"
+      >
+        <div class="d-flex align-items-center">
+          <i id="apiStatusIcon" class="fas fa-info-circle me-2"></i>
+          <div class="flex-grow-1">
+            <strong id="apiStatusTitle">API Status</strong>
+            <div id="apiStatusMessage"></div>
+          </div>
+          <button
+            type="button"
+            class="btn-close"
+            onclick="closeApiStatusBanner()"
+          ></button>
+        </div>
+      </div>
+    </div>
     <!-- Main Container -->
     <div class="container-fluid p-0">
       <!-- Filters -->
@@ -268,6 +290,103 @@
         </div>
       </div>
     </div>
+
+    <!-- Tambahkan sebelum closing </body> -->
+
+    <!-- Debug Panel (hanya tampil di development) -->
+    <div id="debugPanel" class="debug-panel" style="display: none">
+      <div class="debug-panel-header">
+        <strong>Debug Panel</strong>
+        <button
+          class="btn-close btn-close-white"
+          onclick="toggleDebugPanel()"
+        ></button>
+      </div>
+      <div class="debug-panel-content">
+        <div class="mb-2">
+          <label class="form-label small">Test ONU External ID:</label>
+          <input
+            type="text"
+            class="form-control form-control-sm"
+            id="debugOnuId"
+            placeholder="Enter ONU ID"
+          />
+        </div>
+        <button class="btn btn-sm btn-primary w-100" onclick="testOnuStatus()">
+          Test Status Detection
+        </button>
+        <hr />
+        <div
+          id="debugOutput"
+          class="small text-white"
+          style="max-height: 300px; overflow-y: auto"
+        >
+          Debug output will appear here...
+        </div>
+      </div>
+    </div>
+
+    <!-- Debug Toggle Button -->
+    <button
+      id="debugToggle"
+      class="debug-toggle"
+      onclick="toggleDebugPanel()"
+      title="Toggle Debug Panel"
+    >
+      <i class="fas fa-bug"></i>
+    </button>
+
+    <script>
+      // Debug panel functions
+      function toggleDebugPanel() {
+        const panel = document.getElementById("debugPanel")
+        panel.style.display = panel.style.display === "none" ? "block" : "none"
+      }
+
+      async function testOnuStatus() {
+        const onuId = document.getElementById("debugOnuId").value
+        if (!onuId) {
+          alert("Please enter ONU External ID")
+          return
+        }
+
+        const output = document.getElementById("debugOutput")
+        output.innerHTML =
+          '<div class="spinner-border spinner-border-sm" role="status"></div> Loading...'
+
+        try {
+          const response = await fetch(`${API_BASE}/debug/onu-status/${onuId}`)
+          const data = await response.json()
+
+          output.innerHTML = `
+            <strong>External ID:</strong> ${data.debug_data.external_id}<br>
+            <strong>Raw Status:</strong> ${
+              data.debug_data.status_response.onu_status || "N/A"
+            }<br>
+            <strong>Processed Status:</strong> ${
+              data.debug_data.processed_status
+            }<br>
+            <hr>
+            <strong>Full Response:</strong><br>
+            <pre style="font-size: 10px;">${JSON.stringify(
+              data.debug_data,
+              null,
+              2
+            )}</pre>
+        `
+        } catch (error) {
+          output.innerHTML = `<div class="text-danger">Error: ${error.message}</div>`
+        }
+      }
+
+      // Show debug panel in development
+      if (
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1"
+      ) {
+        document.getElementById("debugToggle").style.display = "block"
+      }
+    </script>
 
     <!-- Scripts -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

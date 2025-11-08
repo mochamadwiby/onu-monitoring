@@ -9,15 +9,16 @@ class OnuService {
       recentLos: [],
       recentPowerFail: []
     };
+    this.odbCache = new Map(); // Cache for ODB data
   }
 
   /**
    * Determine ONU operational status based on API response
    */
-  determineOnuStatus(statusString, lastDownCause = null) {
+  determineOnuStatus(statusString) {
     if (!statusString) return 'Offline';
 
-    const status = statusString.toLowerCase();
+    const status = statusString.toLowerCase().trim();
 
     if (status === 'online') {
       return 'Online';
@@ -29,16 +30,7 @@ class OnuService {
       return 'Offline';
     }
 
-    // Fallback based on last down cause
-    if (lastDownCause) {
-      const cause = lastDownCause.toLowerCase();
-      if (cause.includes('los') || cause.includes('signal')) {
-        return 'LOS';
-      } else if (cause.includes('power') || cause.includes('dying-gasp')) {
-        return 'Power Fail';
-      }
-    }
-
+    // Default to offline for unknown status
     return 'Offline';
   }
 
@@ -108,33 +100,24 @@ class OnuService {
 
       logger.info('Fetching fresh ONU data from API');
 
-      // Get all ONUs details
+      // Get all ONUs details (already includes status in response)
       const detailsResponse = await this.api.getAllOnusDetails(filters);
 
-      if (!detailsResponse.status || !detailsResponse.response) {
+      if (!detailsResponse.status || !detailsResponse.onus) {
         throw new Error('Invalid response from get_all_onus_details');
       }
 
-      const onus = detailsResponse.response;
+      const onus = detailsResponse.onus;
       logger.info(`Retrieved ${onus.length} ONUs`);
-
-      // Get statuses for all ONUs
-      const statusResponse = await this.api.getOnuStatuses(filters);
-      const statusMap = {};
-
-      if (statusResponse.status && statusResponse.response) {
-        statusResponse.response.forEach(item => {
-          statusMap[item.unique_external_id] = item.onu_status;
-        });
-      }
 
       // Process each ONU
       const processedOnus = onus.map(onu => {
-        const rawStatus = statusMap[onu.unique_external_id];
+        // Status is already in the response
+        const rawStatus = onu.status;
         const status = this.determineOnuStatus(rawStatus);
         const color = this.getStatusColor(status);
 
-        // Check cache for old status
+        // Check cache for old status to track changes
         const oldStatusKey = `status_${onu.unique_external_id}`;
         const oldStatus = this.cache.get(oldStatusKey);
 
@@ -149,7 +132,10 @@ class OnuService {
           ...onu,
           status,
           status_color: color,
-          raw_status: rawStatus
+          raw_status: rawStatus,
+          // Ensure latitude and longitude are numbers
+          latitude: onu.latitude ? parseFloat(onu.latitude) : null,
+          longitude: onu.longitude ? parseFloat(onu.longitude) : null
         };
       });
 
@@ -176,60 +162,57 @@ class OnuService {
         return cached;
       }
 
-      logger.info('Fetching fresh GPS data from API');
+      logger.info('Fetching fresh data from API (using get_all_onus_details)');
 
-      // Get GPS coordinates
-      const gpsResponse = await this.api.getAllOnusGpsCoordinates(filters);
-
-      if (!gpsResponse.status || !gpsResponse.onus) {
-        throw new Error('Invalid response from get_all_onus_gps_coordinates');
-      }
-
-      const gpsOnus = gpsResponse.onus;
-      logger.info(`Retrieved GPS data for ${gpsOnus.length} ONUs`);
-
-      // Get details for these ONUs
+      // Use get_all_onus_details instead of GPS endpoint to avoid rate limiting
+      // This endpoint includes coordinates, status, and all other info
       const detailsResponse = await this.api.getAllOnusDetails(filters);
-      const detailsMap = {};
 
-      if (detailsResponse.status && detailsResponse.response) {
-        detailsResponse.response.forEach(onu => {
-          detailsMap[onu.unique_external_id] = onu;
-        });
+      if (!detailsResponse.status || !detailsResponse.onus) {
+        throw new Error('Invalid response from get_all_onus_details');
       }
 
-      // Get statuses
-      const statusResponse = await this.api.getOnuStatuses(filters);
-      const statusMap = {};
+      const onus = detailsResponse.onus;
+      logger.info(`Retrieved ${onus.length} ONUs`);
 
-      if (statusResponse.status && statusResponse.response) {
-        statusResponse.response.forEach(item => {
-          statusMap[item.unique_external_id] = item.onu_status;
+      // Filter only ONUs with valid coordinates and process them
+      const onusWithGps = onus
+        .filter(onu => {
+          const lat = onu.latitude ? parseFloat(onu.latitude) : null;
+          const lng = onu.longitude ? parseFloat(onu.longitude) : null;
+          return lat && lng && !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0;
+        })
+        .map(onu => {
+          const rawStatus = onu.status;
+          const status = this.determineOnuStatus(rawStatus);
+          const color = this.getStatusColor(status);
+
+          // Track status changes
+          const oldStatusKey = `status_${onu.unique_external_id}`;
+          const oldStatus = this.cache.get(oldStatusKey);
+
+          if (oldStatus && oldStatus !== status) {
+            this.trackStatusChange(onu, status, oldStatus);
+          }
+
+          this.cache.set(oldStatusKey, status, this.config.cache.ttl.onuStatus);
+
+          return {
+            ...onu,
+            status,
+            status_color: color,
+            raw_status: rawStatus,
+            latitude: parseFloat(onu.latitude),
+            longitude: parseFloat(onu.longitude)
+          };
         });
-      }
 
-      // Combine data
-      const result = gpsOnus.map(gpsOnu => {
-        const details = detailsMap[gpsOnu.unique_external_id] || {};
-        const rawStatus = statusMap[gpsOnu.unique_external_id];
-        const status = this.determineOnuStatus(rawStatus);
-        const color = this.getStatusColor(status);
-
-        return {
-          unique_external_id: gpsOnu.unique_external_id,
-          latitude: parseFloat(gpsOnu.latitude),
-          longitude: parseFloat(gpsOnu.longitude),
-          status,
-          status_color: color,
-          raw_status: rawStatus,
-          ...details
-        };
-      });
+      logger.info(`Filtered to ${onusWithGps.length} ONUs with valid GPS coordinates`);
 
       // Cache the result
-      this.cache.set(cacheKey, result, this.config.cache.ttl.gps);
+      this.cache.set(cacheKey, onusWithGps, this.config.cache.ttl.gps);
 
-      return result;
+      return onusWithGps;
     } catch (error) {
       logger.error('Error in getOnusWithGps:', error);
       throw error;
@@ -248,22 +231,22 @@ class OnuService {
         return cached;
       }
 
-      const [detailsResponse, statusResponse, signalResponse] = await Promise.all([
+      const [detailsResponse, signalResponse] = await Promise.all([
         this.api.getOnuDetails(externalId),
-        this.api.getOnuStatus(externalId),
-        this.api.getOnuSignal(externalId)
+        this.api.getOnuSignal(externalId).catch(() => ({ status: false }))
       ]);
 
       if (!detailsResponse.status) {
         throw new Error('Failed to get ONU details');
       }
 
-      const rawStatus = statusResponse.status ? statusResponse.onu_status : null;
+      const onu = detailsResponse.onu_details;
+      const rawStatus = onu.status;
       const status = this.determineOnuStatus(rawStatus);
       const color = this.getStatusColor(status);
 
       const result = {
-        ...detailsResponse.onu_details,
+        ...onu,
         status,
         status_color: color,
         raw_status: rawStatus,
@@ -300,13 +283,12 @@ class OnuService {
       const odbGroups = {};
 
       onus.forEach(onu => {
-        const odbName = onu.odb_name || 'Unknown';
+        const odbName = onu.odb_name || 'Unknown ODB';
 
         if (!odbGroups[odbName]) {
           odbGroups[odbName] = {
             odb_name: odbName,
-            onus: [],
-            odb_coordinates: null // Should be fetched or set manually
+            onus: []
           };
         }
 
@@ -316,6 +298,94 @@ class OnuService {
       return Object.values(odbGroups);
     } catch (error) {
       logger.error('Error in getOnusByOdb:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get statistics summary
+   */
+  async getStatistics(filters = {}) {
+    try {
+      const onus = await this.getAllOnusWithDetails(filters);
+
+      const stats = {
+        total: onus.length,
+        online: 0,
+        los: 0,
+        power_fail: 0,
+        offline: 0,
+        with_gps: 0,
+        without_gps: 0,
+        by_olt: {},
+        by_zone: {},
+        by_odb: {}
+      };
+
+      onus.forEach(onu => {
+        // Count by status
+        switch (onu.status) {
+          case 'Online':
+            stats.online++;
+            break;
+          case 'LOS':
+            stats.los++;
+            break;
+          case 'Power Fail':
+            stats.power_fail++;
+            break;
+          case 'Offline':
+            stats.offline++;
+            break;
+        }
+
+        // Count GPS
+        if (onu.latitude && onu.longitude) {
+          stats.with_gps++;
+        } else {
+          stats.without_gps++;
+        }
+
+        // Group by OLT
+        const oltName = onu.olt_name || 'Unknown';
+        if (!stats.by_olt[oltName]) {
+          stats.by_olt[oltName] = { total: 0, online: 0, offline: 0 };
+        }
+        stats.by_olt[oltName].total++;
+        if (onu.status === 'Online') {
+          stats.by_olt[oltName].online++;
+        } else {
+          stats.by_olt[oltName].offline++;
+        }
+
+        // Group by Zone
+        const zoneName = onu.zone_name || 'Unknown';
+        if (!stats.by_zone[zoneName]) {
+          stats.by_zone[zoneName] = { total: 0, online: 0, offline: 0 };
+        }
+        stats.by_zone[zoneName].total++;
+        if (onu.status === 'Online') {
+          stats.by_zone[zoneName].online++;
+        } else {
+          stats.by_zone[zoneName].offline++;
+        }
+
+        // Group by ODB
+        const odbName = onu.odb_name || 'Unknown';
+        if (!stats.by_odb[odbName]) {
+          stats.by_odb[odbName] = { total: 0, online: 0, offline: 0 };
+        }
+        stats.by_odb[odbName].total++;
+        if (onu.status === 'Online') {
+          stats.by_odb[odbName].online++;
+        } else {
+          stats.by_odb[odbName].offline++;
+        }
+      });
+
+      return stats;
+    } catch (error) {
+      logger.error('Error in getStatistics:', error);
       throw error;
     }
   }

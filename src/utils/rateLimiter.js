@@ -33,7 +33,6 @@ class RateLimiter {
     const now = Date.now();
     const oneHourAgo = now - (60 * 60 * 1000);
 
-    // Remove calls older than 1 hour
     this.callCounts[endpointType] = this.callCounts[endpointType].filter(
       timestamp => timestamp > oneHourAgo
     );

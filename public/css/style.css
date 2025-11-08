@@ -413,3 +413,60 @@ body {
 .rate-limit-warning.hidden {
   display: none;
 }
+
+/* Debug Panel */
+.debug-panel {
+  position: fixed;
+  bottom: calc(var(--footer-height) + 20px);
+  left: 20px;
+  width: 400px;
+  background: rgba(0, 0, 0, 0.9);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 10000;
+}
+
+.debug-panel-header {
+  background: #dc3545;
+  color: white;
+  padding: 10px 15px;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.debug-panel-content {
+  padding: 15px;
+  color: white;
+}
+
+.debug-toggle {
+  position: fixed;
+  bottom: calc(var(--footer-height) + 20px);
+  left: 20px;
+  width: 40px;
+  height: 40px;
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  z-index: 9999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.debug-toggle:hover {
+  background: #c82333;
+}
+
+#debugOutput pre {
+  background: #1a1a1a;
+  padding: 10px;
+  border-radius: 4px;
+  overflow-x: auto;
+  max-width: 100%;
+}

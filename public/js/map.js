@@ -12,6 +12,7 @@ let statusVisibility = {
 };
 let showAntlines = true;
 let autoRefreshInterval;
+let apiConfigured = false;
 
 // API Base URL
 const API_BASE = '/api';
@@ -76,6 +77,7 @@ function initializeEventListeners() {
     showAntlines = e.target.checked;
     toggleAntlines();
   });
+  testApiConnection();
 }
 
 // Load OLTs list for filter
@@ -184,8 +186,8 @@ function groupOnusByOdb(onus) {
     if (!groups[odbName]) {
       groups[odbName] = {
         odbName: odbName,
+        odb_name: odbName,
         onus: [],
-        // Calculate average position for ODB marker
         avgLat: 0,
         avgLng: 0
       };
@@ -198,7 +200,8 @@ function groupOnusByOdb(onus) {
   Object.values(groups).forEach(group => {
     const validOnus = group.onus.filter(onu =>
       onu.latitude && onu.longitude &&
-      !isNaN(onu.latitude) && !isNaN(onu.longitude)
+      !isNaN(parseFloat(onu.latitude)) &&
+      !isNaN(parseFloat(onu.longitude))
     );
 
     if (validOnus.length > 0) {
@@ -256,8 +259,11 @@ function addOnuMarkers(onus) {
 
 // Add ODB markers and antlines
 function addOdbMarkersAndAntlines(odbGroups) {
-  Object.values(odbGroups).forEach(group => {
-    if (group.onus.length === 0 || !group.avgLat || !group.avgLng) {
+  // Convert object to array if needed
+  const groups = Array.isArray(odbGroups) ? odbGroups : Object.values(odbGroups);
+
+  groups.forEach(group => {
+    if (!group.onus || group.onus.length === 0 || !group.avgLat || !group.avgLng) {
       return;
     }
 
@@ -275,7 +281,7 @@ function addOdbMarkersAndAntlines(odbGroups) {
 
     const odbPopupContent = `
             <div class="popup-header">
-                <i class="fas fa-project-diagram"></i> ${group.odbName}
+                <i class="fas fa-project-diagram"></i> ${group.odbName || group.odb_name}
             </div>
             <div class="popup-info">
                 <div class="popup-info-row">
@@ -296,6 +302,9 @@ function addOdbMarkersAndAntlines(odbGroups) {
 
       const lat = parseFloat(onu.latitude);
       const lng = parseFloat(onu.longitude);
+
+      // Validate coordinates
+      if (isNaN(lat) || isNaN(lng)) return;
 
       // Color based on status
       let color;
@@ -784,5 +793,317 @@ function startAutoRefresh() {
 function stopAutoRefresh() {
   if (autoRefreshInterval) {
     clearInterval(autoRefreshInterval);
+  }
+}
+
+// ... existing code ...
+
+// Group ONUs by ODB
+function groupOnusByOdb(onus) {
+  const groups = {};
+
+  onus.forEach(onu => {
+    // Skip if no ODB name or coordinates
+    if (!onu.odb_name || onu.odb_name === '' || onu.odb_name === 'Unknown ODB') {
+      return;
+    }
+
+    const odbName = onu.odb_name;
+
+    if (!groups[odbName]) {
+      groups[odbName] = {
+        odbName: odbName,
+        onus: [],
+        avgLat: 0,
+        avgLng: 0
+      };
+    }
+
+    groups[odbName].onus.push(onu);
+  });
+
+  // Calculate average coordinates for each ODB
+  Object.values(groups).forEach(group => {
+    const validOnus = group.onus.filter(onu =>
+      onu.latitude && onu.longitude &&
+      !isNaN(onu.latitude) && !isNaN(onu.longitude)
+    );
+
+    if (validOnus.length > 0) {
+      group.avgLat = validOnus.reduce((sum, onu) => sum + parseFloat(onu.latitude), 0) / validOnus.length;
+      group.avgLng = validOnus.reduce((sum, onu) => sum + parseFloat(onu.longitude), 0) / validOnus.length;
+    }
+  });
+
+  // Filter out groups with no valid coordinates
+  return Object.values(groups).filter(group => group.avgLat !== 0 && group.avgLng !== 0);
+}
+
+// Add ONU markers to map
+function addOnuMarkers(onus) {
+  onus.forEach(onu => {
+    if (!onu.latitude || !onu.longitude || isNaN(onu.latitude) || isNaN(onu.longitude)) {
+      console.warn(`ONU ${onu.unique_external_id} has invalid coordinates`);
+      return;
+    }
+
+    const lat = parseFloat(onu.latitude);
+    const lng = parseFloat(onu.longitude);
+
+    // Skip invalid coordinates
+    if (lat === 0 && lng === 0) {
+      console.warn(`ONU ${onu.unique_external_id} has zero coordinates`);
+      return;
+    }
+
+    // Create custom icon
+    const iconHtml = `<div class="onu-marker ${getStatusClass(onu.status)}"></div>`;
+    const icon = L.divIcon({
+      html: iconHtml,
+      className: 'custom-marker',
+      iconSize: [20, 20],
+      iconAnchor: [10, 10],
+      popupAnchor: [0, -10]
+    });
+
+    // Create marker
+    const marker = L.marker([lat, lng], { icon: icon });
+
+    // Create popup content
+    const popupContent = createOnuPopup(onu);
+    marker.bindPopup(popupContent);
+
+    marker.addTo(map);
+
+    onuMarkers.push({
+      marker: marker,
+      onu: onu,
+      status: onu.status
+    });
+  });
+
+  filterMarkers();
+}
+
+// Create ONU popup content
+function createOnuPopup(onu) {
+  return `
+        <div class="popup-header">
+            <i class="fas fa-wifi"></i> ${onu.name || onu.unique_external_id}
+        </div>
+        <div class="popup-info">
+            <div class="popup-info-row">
+                <span class="popup-info-label">Status:</span>
+                <span class="popup-status ${getStatusClass(onu.status)}">${onu.status}</span>
+            </div>
+            <div class="popup-info-row">
+                <span class="popup-info-label">Signal:</span>
+                <span class="popup-info-value">${onu.signal || 'N/A'}</span>
+            </div>
+            ${onu.signal_1310 ? `
+            <div class="popup-info-row">
+                <span class="popup-info-label">Signal 1310:</span>
+                <span class="popup-info-value">${onu.signal_1310} dBm</span>
+            </div>
+            ` : ''}
+            ${onu.signal_1490 ? `
+            <div class="popup-info-row">
+                <span class="popup-info-label">Signal 1490:</span>
+                <span class="popup-info-value">${onu.signal_1490} dBm</span>
+            </div>
+            ` : ''}
+            <div class="popup-info-row">
+                <span class="popup-info-label">ODB:</span>
+                <span class="popup-info-value">${onu.odb_name || 'N/A'}</span>
+            </div>
+            ${onu.odb_port ? `
+            <div class="popup-info-row">
+                <span class="popup-info-label">ODB Port:</span>
+                <span class="popup-info-value">${onu.odb_port}</span>
+            </div>
+            ` : ''}
+            <div class="popup-info-row">
+                <span class="popup-info-label">OLT:</span>
+                <span class="popup-info-value">${onu.olt_name || 'N/A'}</span>
+            </div>
+            <div class="popup-info-row">
+                <span class="popup-info-label">PON:</span>
+                <span class="popup-info-value">${onu.board || 'N/A'}/${onu.port || 'N/A'}/${onu.onu || 'N/A'}</span>
+            </div>
+            <div class="popup-info-row">
+                <span class="popup-info-label">Type:</span>
+                <span class="popup-info-value">${onu.onu_type_name || 'N/A'}</span>
+            </div>
+            <div class="popup-info-row">
+                <span class="popup-info-label">Zone:</span>
+                <span class="popup-info-value">${onu.zone_name || 'N/A'}</span>
+            </div>
+            <div class="popup-info-row">
+                <span class="popup-info-label">SN:</span>
+                <span class="popup-info-value"><small>${onu.sn || 'N/A'}</small></span>
+            </div>
+        </div>
+        <div class="popup-actions">
+            <button class="btn-popup btn-popup-primary" onclick="showOnuDetails('${onu.unique_external_id}')">
+                <i class="fas fa-info-circle"></i> View Full Details
+            </button>
+        </div>
+    `;
+}
+
+// Tambahkan fungsi-fungsi baru
+async function testApiConnection() {
+  try {
+    const response = await fetch(`${API_BASE}/test-connection`);
+    const data = await response.json();
+
+    if (data.status) {
+      apiConfigured = true;
+      showApiStatusBanner('success', 'API Connected', 'Connection to SmartOLT API successful');
+      setTimeout(() => closeApiStatusBanner(), 5000);
+    } else {
+      apiConfigured = false;
+      showApiStatusBanner('danger', 'API Connection Failed', data.error);
+      showConfigDebug(data.config);
+    }
+  } catch (error) {
+    apiConfigured = false;
+    showApiStatusBanner('danger', 'API Connection Error', error.message);
+    console.error('API connection test failed:', error);
+  }
+}
+
+async function showConfigDebug(config) {
+  console.group('🔧 API Configuration Debug');
+  console.log('Base URL:', config?.baseUrl || 'Not set');
+  console.log('API Key Configured:', config?.apiKeySet || false);
+  console.log('API Key Prefix:', config?.apiKeyPrefix || 'NOT SET');
+  console.groupEnd();
+
+  // Try to get more debug info
+  try {
+    const response = await fetch(`${API_BASE}/debug/config`);
+    const debugData = await response.json();
+
+    if (debugData.status) {
+      console.group('📊 Full Configuration');
+      console.table(debugData.config);
+      console.groupEnd();
+    }
+  } catch (error) {
+    console.error('Could not fetch debug config:', error);
+  }
+}
+
+function showApiStatusBanner(type, title, message) {
+  const banner = document.getElementById('apiStatusBanner');
+  const icon = document.getElementById('apiStatusIcon');
+  const titleEl = document.getElementById('apiStatusTitle');
+  const messageEl = document.getElementById('apiStatusMessage');
+
+  // Set content
+  titleEl.textContent = title;
+  messageEl.textContent = message;
+
+  // Set style
+  banner.className = `alert alert-${type} alert-dismissible fade show`;
+  banner.style.display = 'block';
+
+  // Set icon
+  if (type === 'success') {
+    icon.className = 'fas fa-check-circle me-2';
+  } else if (type === 'danger') {
+    icon.className = 'fas fa-exclamation-triangle me-2';
+  } else {
+    icon.className = 'fas fa-info-circle me-2';
+  }
+}
+
+function closeApiStatusBanner() {
+  const banner = document.getElementById('apiStatusBanner');
+  banner.style.display = 'none';
+}
+
+// Update loadOnuData untuk cek API configuration dulu
+async function loadOnuData() {
+  if (!apiConfigured) {
+    showNotification('API not configured. Please check your API key.', 'error');
+    showApiStatusBanner('warning', 'Configuration Required',
+      'Please configure your API_KEY in the .env file and restart the server.');
+    return;
+  }
+
+  showLoading(true);
+
+  try {
+    // Build query string
+    const queryParams = new URLSearchParams(currentFilters).toString();
+    const url = `${API_BASE}/onus/gps${queryParams ? '?' + queryParams : ''}`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (!data.status) {
+      // Enhanced error handling
+      let errorMessage = data.error || 'Failed to load ONU data';
+
+      if (errorMessage.includes('403')) {
+        errorMessage = '403 Forbidden: Please check your API key configuration.\n' +
+          'Go to server console for detailed instructions.';
+        showApiStatusBanner('danger', 'Access Denied', errorMessage);
+      } else if (errorMessage.includes('401')) {
+        errorMessage = '401 Unauthorized: Invalid API key.\n' +
+          'Please verify your API_KEY in .env file.';
+        showApiStatusBanner('danger', 'Authentication Failed', errorMessage);
+      }
+
+      throw new Error(errorMessage);
+    }
+
+    // Clear existing markers
+    clearMarkers();
+
+    // Process ONU data
+    const onus = data.data || [];
+
+    if (onus.length === 0) {
+      showNotification('No ONUs found with current filters', 'info');
+      updateStatistics({ online: 0, los: 0, powerFail: 0, offline: 0 });
+      showLoading(false);
+      return;
+    }
+
+    // Group ONUs by ODB for antlines
+    const odbGroups = groupOnusByOdb(onus);
+
+    // Add markers and antlines
+    addOnuMarkers(onus);
+    addOdbMarkersAndAntlines(odbGroups);
+
+    // Update statistics
+    updateStatistics(calculateStatistics(onus));
+
+    // Load status history
+    loadStatusHistory();
+
+    // Fit map to markers
+    if (onuMarkers.length > 0) {
+      const group = new L.featureGroup(onuMarkers.map(m => m.marker));
+      map.fitBounds(group.getBounds().pad(0.1));
+    }
+
+    showNotification('ONU data loaded successfully', 'success');
+
+  } catch (error) {
+    console.error('Error loading ONU data:', error);
+    showNotification(error.message, 'error');
+
+    // Show detailed error in console
+    console.group('❌ Error Details');
+    console.error('Message:', error.message);
+    console.error('Stack:', error.stack);
+    console.groupEnd();
+  } finally {
+    showLoading(false);
   }
 }

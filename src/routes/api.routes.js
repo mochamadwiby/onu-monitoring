@@ -146,6 +146,56 @@ function createApiRoutes(onuService, apiService, rateLimiter) {
     }
   });
 
+  // Get ODBs list - NEW
+  router.get('/odbs', async (req, res) => {
+    try {
+      const filters = {
+        zone: req.query.zone
+      };
+
+      Object.keys(filters).forEach(key =>
+        filters[key] === undefined && delete filters[key]
+      );
+
+      const result = await apiService.getOdbsList(filters);
+      res.json(result);
+    } catch (error) {
+      logger.error('Error in GET /api/odbs:', error);
+      res.status(500).json({
+        status: false,
+        error: error.message
+      });
+    }
+  });
+
+  // Refresh specific ONU statuses - NEW
+  router.post('/onus/refresh-status', async (req, res) => {
+    try {
+      const { external_ids } = req.body;
+
+      if (!external_ids || !Array.isArray(external_ids)) {
+        return res.status(400).json({
+          status: false,
+          error: 'external_ids array is required'
+        });
+      }
+
+      const results = await onuService.refreshOnuStatuses(external_ids);
+
+      res.json({
+        status: true,
+        count: results.length,
+        data: results
+      });
+    } catch (error) {
+      logger.error('Error in POST /api/onus/refresh-status:', error);
+      res.status(500).json({
+        status: false,
+        error: error.message
+      });
+    }
+  });
+
   // Get rate limiter stats
   router.get('/rate-limit-stats', async (req, res) => {
     try {
@@ -162,6 +212,68 @@ function createApiRoutes(onuService, apiService, rateLimiter) {
       });
     } catch (error) {
       logger.error('Error in GET /api/rate-limit-stats:', error);
+      res.status(500).json({
+        status: false,
+        error: error.message
+      });
+    }
+  });
+
+  // Get statistics
+  router.get('/statistics', async (req, res) => {
+    try {
+      const filters = {
+        olt_id: req.query.olt_id,
+        board: req.query.board,
+        port: req.query.port,
+        zone: req.query.zone
+      };
+
+      Object.keys(filters).forEach(key =>
+        filters[key] === undefined && delete filters[key]
+      );
+
+      const stats = await onuService.getStatistics(filters);
+
+      res.json({
+        status: true,
+        data: stats
+      });
+    } catch (error) {
+      logger.error('Error in GET /api/statistics:', error);
+      res.status(500).json({
+        status: false,
+        error: error.message
+      });
+    }
+  });
+
+  // Debug endpoint untuk troubleshooting - NEW
+  router.get('/debug/onu-status/:externalId', async (req, res) => {
+    try {
+      const externalId = req.params.externalId;
+
+      // Get raw data from all endpoints
+      const [detailsResponse, statusResponse, signalResponse] = await Promise.all([
+        apiService.getOnuDetails(externalId).catch(e => ({ error: e.message })),
+        apiService.getOnuStatus(externalId).catch(e => ({ error: e.message })),
+        apiService.getOnuSignal(externalId).catch(e => ({ error: e.message }))
+      ]);
+
+      res.json({
+        status: true,
+        debug_data: {
+          external_id: externalId,
+          details_response: detailsResponse,
+          status_response: statusResponse,
+          signal_response: signalResponse,
+          processed_status: statusResponse.onu_status ?
+            onuService.determineOnuStatus(statusResponse.onu_status) :
+            'No status available'
+        }
+      });
+    } catch (error) {
+      logger.error(`Error in GET /api/debug/onu-status/${req.params.externalId}:`, error);
       res.status(500).json({
         status: false,
         error: error.message

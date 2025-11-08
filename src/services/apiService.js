@@ -12,14 +12,19 @@ class ApiService {
       timeout: 30000,
       headers: {
         'X-Token': this.apiKey,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       }
     });
 
     // Request interceptor
     this.client.interceptors.request.use(
       (config) => {
-        logger.debug(`API Request: ${config.method.toUpperCase()} ${config.url}`);
+        logger.debug(`API Request: ${config.method.toUpperCase()} ${config.url}`, {
+          headers: {
+            'X-Token': this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'NOT SET'
+          }
+        });
         return config;
       },
       (error) => {
@@ -36,11 +41,32 @@ class ApiService {
       },
       (error) => {
         if (error.response) {
-          logger.error(`API Error Response: ${error.response.status} ${error.response.config.url}`, {
-            data: error.response.data
+          const status = error.response.status;
+          const url = error.response.config.url;
+
+          logger.error(`API Error Response: ${status} ${url}`, {
+            data: error.response.data,
+            headers: error.response.headers
           });
+
+          // Handle specific error codes
+          if (status === 403) {
+            logger.error('403 Forbidden - Check API Key and permissions', {
+              apiKey: this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'NOT SET',
+              url: url
+            });
+          } else if (status === 401) {
+            logger.error('401 Unauthorized - Invalid API Key', {
+              apiKey: this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'NOT SET'
+            });
+          } else if (status === 429) {
+            logger.error('429 Too Many Requests - Rate limit exceeded');
+          }
         } else if (error.request) {
-          logger.error('API No Response:', error.request);
+          logger.error('API No Response:', {
+            url: error.config?.url,
+            message: 'No response received from server'
+          });
         } else {
           logger.error('API Error:', error.message);
         }
@@ -51,6 +77,11 @@ class ApiService {
 
   async makeRequest(endpoint, params = {}, endpointType = 'normal') {
     try {
+      // Validate API key
+      if (!this.apiKey || this.apiKey === 'your_api_key_here') {
+        throw new Error('Invalid API Key. Please configure API_KEY in .env file');
+      }
+
       // Check rate limit for restricted endpoints
       if (endpointType !== 'normal') {
         const limitCheck = this.rateLimiter.canCallEndpoint(endpointType);
@@ -78,17 +109,64 @@ class ApiService {
       }
 
       if (response.data.status === false) {
-        throw new Error(response.data.error || 'API returned error status');
+        const errorMsg = response.data.error || 'API returned error status';
+
+        // Check for common error messages
+        if (errorMsg.toLowerCase().includes('invalid api key')) {
+          throw new Error('Invalid API Key. Please check your API_KEY configuration in .env file');
+        }
+
+        throw new Error(errorMsg);
       }
 
       return response.data;
     } catch (error) {
+      // Enhanced error message
+      if (error.response?.status === 403) {
+        const enhancedError = new Error(
+          `403 Forbidden: Access denied. Please verify:\n` +
+          `1. API Key is correct in .env file\n` +
+          `2. API Key has proper permissions\n` +
+          `3. Endpoint URL is correct: ${this.baseUrl}${endpoint}\n` +
+          `4. Your IP is allowed (if IP whitelisting is enabled)`
+        );
+        logger.error('Enhanced 403 error:', enhancedError.message);
+        throw enhancedError;
+      }
+
+      if (error.response?.status === 401) {
+        throw new Error(
+          `401 Unauthorized: Invalid API Key. Current key starts with: ${this.apiKey?.substring(0, 10)}...`
+        );
+      }
+
       logger.error(`API request failed for ${endpoint}:`, error.message);
       throw error;
     }
   }
 
+  // Test API connection
+  async testConnection() {
+    try {
+      logger.info('Testing API connection...');
+      const result = await this.getOltsList();
+      logger.info('API connection successful');
+      return { success: true, message: 'Connected successfully' };
+    } catch (error) {
+      logger.error('API connection test failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
   // Critical endpoints
+  async getOdbs(params = {}) {
+    return this.makeRequest('/system/get_odbs', params);
+  }
+
+  async getOdbById(odbId) {
+    return this.makeRequest(`/system/get_odb/${odbId}`);
+  }
+
   async getOltsList() {
     return this.makeRequest('/system/get_olts');
   }

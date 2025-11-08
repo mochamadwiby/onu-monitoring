@@ -226,4 +226,32 @@ describe('OnuService', () => {
       expect(mockCacheService.set).toHaveBeenCalled();
     });
   });
+
+  describe('determineOnuStatus - Extended', () => {
+    test('should handle various online status formats', () => {
+      expect(onuService.determineOnuStatus('online')).toBe('Online');
+      expect(onuService.determineOnuStatus('Online')).toBe('Online');
+      expect(onuService.determineOnuStatus('ONLINE')).toBe('Online');
+      expect(onuService.determineOnuStatus('working')).toBe('Online');
+      expect(onuService.determineOnuStatus('up')).toBe('Online');
+    });
+
+    test('should handle various LOS status formats', () => {
+      expect(onuService.determineOnuStatus('los')).toBe('LOS');
+      expect(onuService.determineOnuStatus('LOS')).toBe('LOS');
+      expect(onuService.determineOnuStatus('loss of signal')).toBe('LOS');
+    });
+
+    test('should handle various power fail formats', () => {
+      expect(onuService.determineOnuStatus('power fail')).toBe('Power Fail');
+      expect(onuService.determineOnuStatus('powerfail')).toBe('Power Fail');
+      expect(onuService.determineOnuStatus('dying-gasp')).toBe('Power Fail');
+      expect(onuService.determineOnuStatus('dyinggasp')).toBe('Power Fail');
+    });
+
+    test('should use last_down_cause as fallback', () => {
+      expect(onuService.determineOnuStatus(null, 'dying-gasp')).toBe('Power Fail');
+      expect(onuService.determineOnuStatus('unknown', 'los detected')).toBe('LOS');
+    });
+  });
 });
