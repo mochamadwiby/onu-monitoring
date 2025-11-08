@@ -1,5 +1,10 @@
 # ONU Monitoring System
 
+[![CI](https://github.com/mochamadwiby/onu-monitoring/workflows/CI/badge.svg)](https://github.com/mochamadwiby/onu-monitoring/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D16.0.0-brightgreen)](https://nodejs.org/)
+[![npm version](https://img.shields.io/npm/v/npm.svg)](https://www.npmjs.com/)
+
 Aplikasi web monitoring untuk menampilkan koordinat ONU di peta dengan visualisasi status real-time menggunakan Leaflet Maps dan SmartOLT API.
 
 ## Fitur
